@@ -1,0 +1,146 @@
+---
+title: "ME315 - Lab03"
+author: "Matheus Rodrigues (259256)"
+format: pdf
+editor: source
+---
+
+# Dados relacionais
+
+```{r}
+library(readr)
+library(dplyr)
+```
+
+1.  Importe, utilizando o pacote readr, cada um dos três arquivos disponíveis. Os objetos resultantes devem ser chamados flights, airlines e airports.
+
+- Para o arquivo de aeroportos, importe apenas as colunas IATA_CODE, CITY, STATE, LATITUDE, LONGITUDE;
+
+- Para o arquivo de vôos:
+
+a.  Importe apenas as colunas DESTINATION_AIRPORT e ARRIVAL_DELAY;
+
+b.  Leia apenas 1 milhão de linhas por vez;
+
+c.  Remova vôos em que o aeroporto de destino comece com a letra 1;
+
+d.  Remova registros em que existam pelo menos uma coluna faltante;
+
+e.  Determine, para cada parte do arquivo, as estatísticas suficientes para a determinação do atraso médio por aeroporto de destino;
+
+f.  Ao finalizar a leitura do arquivo, combine as estatísticas suficientes de modo a produzir a média de atraso por aeroporto.
+
+```{r}
+airlines <- read_csv("airlines.csv")
+
+airports <- read_csv(
+  "airports.csv",
+  col_select = c(
+    IATA_CODE, CITY, STATE, LATITUDE, LONGITUDE
+  )
+)
+
+estatisticas <- read_csv_chunked(
+  "flights.csv",
+  chunk_size = 1000000,
+  col_types = cols_only(
+    DESTINATION_AIRPORT = col_character(),
+    ARRIVAL_DELAY = col_double()
+  ),
+  callback = DataFrameCallback$new(function(x, pos) {
+    x |>
+      filter(!grepl("^1", DESTINATION_AIRPORT)) |>
+      na.omit() |>
+      group_by(DESTINATION_AIRPORT) |>
+      summarise(soma = sum(ARRIVAL_DELAY), n = n())
+  })
+)
+
+flights <- estatisticas |>
+  group_by(DESTINATION_AIRPORT) |>
+  summarise(atraso_medio = sum(soma) / sum(n))
+
+flights
+```
+
+2.  Selecione a operação apropriada join para incluir, na tabela flights, as colunas CITY e STATE do objeto airports. Para executar esta tarefa:
+
+a.  Identifique a coluna que é a chave na tabela flights;
+
+b.  Identifique a coluna que é a chave na tabela airports;
+
+c.  Quais são os aeroportos que estão listados em flights, mas estão ausentes em airports?
+
+d.  Apresente o comando que combine ambas as tabelas, indicando explicitamente as chaves;
+
+e.  Armazene a tabela resultante no objeto flights.
+
+```{r}
+ausentes <- flights |>
+  anti_join(airports, by = c("DESTINATION_AIRPORT" = "IATA_CODE")) |>
+  select(DESTINATION_AIRPORT)
+
+ausentes
+```
+
+Nenhum aeroporto ausente.
+
+```{r}
+
+flights <- flights |>
+  left_join(
+    airports |>
+      select(IATA_CODE, CITY, STATE), by = c("DESTINATION_AIRPORT" = "IATA_CODE")
+  )
+
+flights
+```
+
+3.  Quantos aeroportos cada estado possui? Apresente uma tabela ordenada de forma decrescente (no número de aeroportos).
+
+```{r}
+
+aeroportos_estado <- airports |>
+  filter(!is.na(STATE)) |>
+  group_by(STATE) |>
+  summarise(TOTAL_AEROPORTOS = n()) |>
+  arrange(desc(TOTAL_AEROPORTOS))
+
+print(aeroportos_estado, n = Inf)
+```
+
+4.  Apresente um mapa representando todos os atrasos observados por aeroporto.
+
+a.  Carregue o pacote leaflet;
+
+b.  Combine os comandos leaflet, addTiles e addMarkers para a criação de um mapa básico;
+
+c.  Armazene o grafico em b) numa variável chamada this;
+
+d.  Adicione as duas linhas abaixo após a criação da variável this (apenas se você estiver usando Jupyter):
+
+```{r}
+library(leaflet)
+
+#| label: fig-mapa
+#| fig-cap: "Mapa atraso médio por aeroporto"
+#| fig-format: png
+
+dados_mapa <- flights |>
+  left_join(airports, by = c("DESTINATION_AIRPORT" = "IATA_CODE")) |>
+  filter(!is.na(LATITUDE) & !is.na(LONGITUDE))
+
+this <- leaflet(dados_mapa) |>
+  addTiles() |>
+  addMarkers(
+    lng = ~LONGITUDE,
+    lat = ~LATITUDE
+  )
+```
+
+
+```{r}
+Sys.setenv(TZ = "America/Sao_Paulo")
+Sys.time()
+```
+
