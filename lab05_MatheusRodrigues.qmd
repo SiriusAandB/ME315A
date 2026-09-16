@@ -1,0 +1,145 @@
+---
+title: "Lab05"
+author: "Matheus Rodrigues (259256)"
+format:
+  pdf:
+    prefer-html: true
+editor: source
+---
+
+```{r, include = FALSE}
+library(tidyverse)
+library(ggplot2)
+library(leaflet)
+library(geosphere)
+library(lubridate)
+library(nycflights13)
+```
+
+##Função
+
+```{r}
+analisa_aeronave <- function(tail_number, arquivo) {
+  filtra_aeronave <- function(dados_chunk, pos) {
+    colunas_existentes <- colnames(dados_chunk)
+    col_alvo <- colunas_existentes[tolower(colunas_existentes) %in% 
+                                     c("tailnum", "tail_number")][1]
+    
+    if (is.na(col_alvo)) {
+      stop("Coluna não encontrada no arquivo.")
+    }
+    
+    #Filtragem
+    dados_chunk |>
+      filter(.data[[col_alvo]] == tail_number)
+  }
+  
+  dados <- read_csv_chunked(
+    file = arquivo,
+    callback = DataFrameCallback$new(filtra_aeronave),
+    chunk_size = 50000,
+    show_col_types = FALSE
+  )
+  
+  if (nrow(dados) == 0) {
+    stop("Aeronave não encontrada.")
+  }
+
+  colnames(dados) <- tolower(colnames(dados))
+  
+  # Adequação de nomes
+  if ("origin_airport" %in% colnames(dados)) dados <- 
+    rename(dados, origin = origin_airport)
+  if ("destination_airport" %in% colnames(dados)) dados <- 
+    rename(dados, dest = destination_airport)
+  if ("departure_time" %in% colnames(dados)) dados <- 
+    rename(dados, dep_time = departure_time)
+  if ("tail_number" %in% colnames(dados)) dados <- 
+    rename(dados, tailnum = tail_number)
+
+  tabela <- dados |>
+    filter(!is.na(dep_time)) |> 
+    mutate(
+      hora_str = str_pad(as.character(dep_time), width = 4,
+                         side = "left", pad = "0"),
+      hora_num = as.numeric(str_sub(hora_str, 1, 2)),
+      minuto_num = as.numeric(str_sub(hora_str, 3, 4)),
+      data_hora = make_datetime(year, month, day, hora_num, minuto_num)
+    ) |>
+    arrange(data_hora) |>
+    select(data_hora, everything(), -hora_str, -hora_num, -minuto_num)
+
+  trajetos <- tabela |>
+    left_join(airports |>
+                select(faa, lat_origem = lat, lon_origem = lon),
+              by = c("origin" = "faa")) |>
+    left_join(airports |>
+                select(faa, lat_destino = lat, lon_destino = lon),
+              by = c("dest" = "faa")) |>
+    mutate(velocidade_media = distance / (air_time / 60)) |>
+    filter(!is.na(lat_origem) & !is.na(lat_destino))
+
+  #Mapa
+  mapa <- leaflet() |>
+    addTiles()
+  
+  for (i in seq_len(nrow(trajetos))) {
+    voo <- trajetos[i, ]
+    espessura <- if (is.na(voo$velocidade_media)) 2 else 
+      max(2, min(8, voo$velocidade_media / 60))
+    
+    mapa <- mapa |>
+      addPolylines(
+        lng = c(voo$lon_origem, voo$lon_destino),
+        lat = c(voo$lat_origem, voo$lat_destino),
+        color = "steelblue",
+        weight = espessura,
+        opacity = 0.5,
+        popup = paste0(
+          "<b>Seq. Voo:</b> ", i, "<br>",
+          "<b>Trecho:</b> ", voo$origin, " → ", voo$dest, "<br>",
+          "<b>Data/Hora:</b> ", format(voo$data_hora, "%d/%m/%Y %H:%M"),
+          "<br>", "<b>Velocidade Média:</b> ", 
+          round(voo$velocidade_media, 1), " mph"
+        )
+      )
+  }
+  
+  aeroportos <- bind_rows(
+    trajetos |>
+      select(codigo = origin, lat = lat_origem, lon = lon_origem),
+    trajetos |>
+      select(codigo = dest, lat = lat_destino, lon = lon_destino)
+  ) |>
+    distinct(codigo, .keep_all = TRUE)
+  
+  mapa <- mapa |>
+    addCircleMarkers(
+      data = aeroportos,
+      lng = ~lon, lat = ~lat,
+      radius = 4, color = "red", fillOpacity = 0.8,
+      popup = ~codigo
+    )
+  
+  return(list(tabela = tabela, mapa = mapa))
+}
+```
+
+##Exemplo
+
+```{r}
+resultado <- analisa_aeronave(
+  tail_number = "N14228",
+  arquivo = "data/flights.csv"
+)
+
+head(resultado$tabela)
+
+resultado$mapa
+```
+
+```{r}
+Sys.setenv(TZ = "America/Sao_Paulo")
+Sys.time()
+```
+
